@@ -1,1 +1,61 @@
 
+name: Dante SOCKS5 with Cloudflared
+
+on:
+  workflow_dispatch:
+
+jobs:
+  tunnel:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Install Dante SOCKS5
+        run: |
+          sudo apt update
+          sudo apt install -y dante-server
+          cat <<EOF | sudo tee /etc/danted.conf
+          logoutput: /var/log/danted.log
+          internal: 0.0.0.0 port = 1080
+          external: eth0
+          method: username none
+          user.notprivileged: nobody
+          client pass {
+            from: 0.0.0.0/0 to: 0.0.0.0/0
+            log: connect disconnect error
+          }
+          pass {
+            from: 0.0.0.0/0 to: 0.0.0.0/0
+            protocol: tcp udp
+            log: connect disconnect error
+          }
+          EOF
+          sudo systemctl restart danted
+          sudo systemctl enable danted
+
+      - name: Download and Install Cloudflared
+        run: |
+          wget -O cloudflared https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
+          chmod +x cloudflared
+          sudo mv cloudflared /usr/local/bin/
+
+      - name: Start Cloudflared Tunnel
+        run: |
+          nohup cloudflared tunnel --url http://localhost:1080 > tunnel.log 2>&1 &
+
+      - name: Wait for Tunnel URL
+        run: |
+          echo "Waiting for Cloudflared tunnel..."
+          for i in {1..30}; do
+            if grep -o 'https://.*\.trycloudflare\.com' tunnel.log; then
+              grep -o 'https://.*\.trycloudflare\.com' tunnel.log > url.txt
+              break
+            fi
+            sleep 2
+          done
+          echo "Tunnel URL:"
+          cat url.txt
+
+      - name: Keep Action Alive
+        run: |
+          echo "Tunnel running. Sleeping forever..."
+          tail -f /dev/null
